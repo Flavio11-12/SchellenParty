@@ -42,4 +42,4 @@ Frontend: HTML, CSS, ggf. GodotUI (je nach Implementierung).
 Designstil: Minimalistisch, klare Farbkontraste, schnelle Lesbarkeit.
 Responsivität: Funktioniert auf Desktop, Tablet, Smartphone.
 
-<img width="454" height="714" alt="image" src="https://github.com/user-attachments/assets/16e1ac6e-717c-4e00-a23d-bbc9a1c8eaca" />
+
