@@ -56,15 +56,25 @@ placeholder_text = "Name"
 [node name="HBoxContainer3" type="HBoxContainer" parent="LobbyFenster/VBoxContainer"]
 layout_mode = 2
 
-[node name="ConnectButton" type="Button" parent="LobbyFenster/VBoxContainer/HBoxContainer3"]
+[node name="HostButton" type="Button" parent="LobbyFenster/VBoxContainer/HBoxContainer3"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Connect"
+text = "Host"
 
-[node name="StartButton" type="Button" parent="LobbyFenster/VBoxContainer/HBoxContainer3"]
+[node name="JoinButton" type="Button" parent="LobbyFenster/VBoxContainer/HBoxContainer3"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Start"
+text = "Join
+"
+
+[node name="HBoxContainer4" type="HBoxContainer" parent="LobbyFenster/VBoxContainer"]
+layout_mode = 2
+
+[node name="StartButton" type="Button" parent="LobbyFenster/VBoxContainer/HBoxContainer4"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start
+"
 
 [node name="StatusLabel" type="Label" parent="LobbyFenster/VBoxContainer"]
 layout_mode = 2
@@ -101,7 +111,7 @@ layout_mode = 2
 [node name="WordRow" type="HBoxContainer" parent="Main/MarginContainer/VBoxContainer"]
 layout_mode = 2
 
-[node name="Wordinput" type="LineEdit" parent="Main/MarginContainer/VBoxContainer/WordRow"]
+[node name="WordInput" type="LineEdit" parent="Main/MarginContainer/VBoxContainer/WordRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "Wort Eingeben"
@@ -130,9 +140,9 @@ size_flags_horizontal = 4
 text = "SchellenParty"
 
 [node name="CanvasLayer" type="CanvasLayer" parent="Main"]
-visible = false
 
 [node name="TextureRect" type="TextureRect" parent="Main/CanvasLayer"]
+visible = false
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5

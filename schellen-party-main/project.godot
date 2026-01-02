@@ -15,6 +15,14 @@ run/main_scene="res://root_scene.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://icon.svg"
 
+[autoload]
+
+Server="*res://server.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godottpd/plugin.cfg")
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

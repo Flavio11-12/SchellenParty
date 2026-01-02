@@ -1,83 +1,68 @@
 extends Control
 
-var connected := false
-var is_host := false
-var ws_peer := WebSocketPeer.new()
-var players := {}
+@onready var ip_input: LineEdit = $VBoxContainer/HBoxContainer/ServerIPInput
+@onready var name_input: LineEdit = $VBoxContainer/HBoxContainer2/PlayerNameInput
+@onready var lobby_list := $VBoxContainer/LobbyList
+@onready var status: Label = $VBoxContainer/StatusLabel
+@onready var host_button: Button = $VBoxContainer/HBoxContainer3/HostButton
+@onready var join_button: Button = $VBoxContainer/HBoxContainer3/JoinButton
+@onready var start_button: Button = $VBoxContainer/HBoxContainer4/StartButton
 
-@onready var server_ip_input := find_child("ServerIPInput", true, false)
-@onready var player_name_input := find_child("PlayerNameInput", true, false)
-@onready var connect_button := find_child("ConnectButton", true, false)
-@onready var start_button := find_child("StartButton", true, false)
-@onready var status_label := find_child("StatusLabel", true, false)
-@onready var lobby_list := find_child("LobbyList", true, false)
+var server := Server
+
+var ws_peer: StreamPeerTCP = null
 
 func _ready():
-	connect_button.pressed.connect(_on_connect_pressed)
+	host_button.pressed.connect(_host)
+	join_button.pressed.connect(_join)
 	start_button.pressed.connect(_on_start_pressed)
 	start_button.disabled = true
+
+	# MainUI am Anfang verstecken
+	var main_ui = get_parent().get_node_or_null("MainUI")
+	if main_ui:
+		main_ui.hide()
+
+# --- Host starten ---
+func _host():
+	status.text = "Host läuft"
+	start_button.disabled = false
+	# LobbyList bleibt leer bis Spieler joinen
+
+# --- Join als Client ---
+func _join():
+	ws_peer = StreamPeerTCP.new()
+	var err = ws_peer.connect_to_host(ip_input.text.strip_edges(), 4322)
+	if err != OK:
+		status.text = "Verbindung fehlgeschlagen"
+		return
+	status.text = "Verbunden"
+
+	# Name senden
+	var join_msg = {"action":"join","name":name_input.text.strip_edges()}
+	ws_peer.put_utf8_string(JSON.stringify(join_msg))
+
 	set_process(true)
 
 func _process(delta):
-	if not connected:
+	if ws_peer == null:
 		return
-	ws_peer.poll()
-	while ws_peer.get_available_packet_count() > 0:
-		var pkt = ws_peer.get_packet()
-		var msg = pkt.get_string_from_utf8()
-		_handle_message(msg)
+	while ws_peer.get_status() == StreamPeerTCP.STATUS_CONNECTED and ws_peer.get_available_bytes() > 0:
+		var msg = ws_peer.get_utf8_string(ws_peer.get_available_bytes())
+		var data = JSON.parse_string(msg).result
+		match data.get("action",""):
+			"player_list":
+				lobby_list.clear()
+				for name in data.players:
+					lobby_list.add_item(name)
+			"start_game":
+				_on_start_pressed()
 
-func _on_connect_pressed():
-	var ip = server_ip_input.text.strip_edges()
-	if ip == "":
-		status_label.text = "Enter server IP"
-		return
-	var err = ws_peer.connect_to_url("ws://" + ip + ":4321")
-	if err != OK:
-		status_label.text = "Connection failed: " + str(err)
-		return
-	connected = true
-	status_label.text = "Connecting..."
-
+# --- Host startet das Spiel ---
 func _on_start_pressed():
-	if is_host:
-		ws_peer.send_text(JSON.stringify({"action":"start_game"}))
-
-func _handle_message(msg: String):
-	var json := JSON.new()
-	if json.parse(msg) != OK:
-		return
-	var obj = json.get_data()
-	match obj.get("type",""):
-		"player_list":
-			players = obj["players"]
-			_update_lobby_ui()
-		"host":
-			is_host = true
-			start_button.disabled = false
-			status_label.text = "You are the Host"
-		"start_game":
-			_start_game()
-		"join_denied":
-			status_label.text = "Name already in use!"
-		"join_ack":
-			print("Join erfolgreich")
-
-func _update_lobby_ui():
-	for child in lobby_list.get_children():
-		child.queue_free()
-	for id in players.keys():
-		var lbl = Label.new()
-		lbl.text = players[id]
-		lobby_list.add_child(lbl)
-
-func _start_game():
-	# Lobby ausblenden
 	self.hide()
-
-	# Main sichtbar machen
-	var main_scene = get_parent().get_node("Main")
-	if main_scene:
-		main_scene.show()
-	else:
-		push_warning("Main node nicht gefunden!")
+	var main_ui = get_parent().get_node_or_null("MainUI")
+	if main_ui:
+		main_ui.show()
+	# Server broadcastet Start an alle Clients
+	server.start_game()
