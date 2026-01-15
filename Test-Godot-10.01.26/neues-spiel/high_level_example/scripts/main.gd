@@ -1,189 +1,264 @@
 extends Node
 
-@onready var connect_node = $"Connect"
-@onready var game_node = $"Game"
-@onready var playerlist = $"Game/PlayerList"
-@onready var nameinput = $"Connect/VBoxContainer/NameEdit"
-@onready var messagebox = $"Game/VBoxContainer/Messages"
-@onready var messageinput = $"Game/VBoxContainer/HBoxContainer/Message"
-@onready var hand = $"Game/TextureRect"
-@onready var ready_button = $"Game/ReadyB"
-@onready var ready_label = $"Game/ReadyL"
-@onready var word_input: LineEdit = $Game/HBoxContainer/Text
-@onready var check_button: Button = $Game/HBoxContainer/Button
-@onready var result_label: Label = $Game/Resultlabel
-@onready var http: HTTPRequest = HTTPRequest.new()
+# =========================
+# UI Nodes
+# =========================
+@onready var connect_node: Control = $"Connect"
+@onready var game_node: Control = $"Game"
 
-var valid_words: Array[String] = []
-var used_words: Array[String] = []
-const IP_ADDRESS := "localhost"
-const PORT:  int = 42069
+@onready var playerlist: Label = $"Game/PlayerList"
+@onready var nameinput: LineEdit = $"Connect/VBoxContainer/NameEdit"
 
-var peer = ENetMultiplayerPeer.new()
-var username : String
-var players := []               # Liste aller Spieler (peer_id)
-var current_turn_index := 0     # index der Spieler am Zug
-var current_player_id := 0
+@onready var messagebox: TextEdit = $"Game/VBoxContainer/Messages"
+@onready var messageinput: LineEdit = $"Game/VBoxContainer/HBoxContainer/Message"
 
-func _on_server_pressed() -> void:
-	peer.create_server(PORT)
+@onready var ready_button: Button = $"Game/ReadyB"
+@onready var ready_label: Label = $"Game/ReadyL"
 
-	var sm = SceneMultiplayer.new()
-	sm.multiplayer_peer = peer
-	get_tree().set_multiplayer(sm)
+@onready var word_input: LineEdit = $"Game/HBoxContainer/Text"
+@onready var check_button: Button = $"Game/HBoxContainer/Button"
+@onready var result_label: Label = $"Game/Resultlabel"
 
-	joined()  # Server kann direkt joinen
 
-func _on_client_pressed() -> void:
-	peer.create_client(IP_ADDRESS, PORT)
+# =========================
+# Networking Config
+# =========================
+const IP_ADDRESS: String = "localhost"  # später im Web: domain / IP vom Server
+const PORT: int = 42069
 
-	var sm = SceneMultiplayer.new()
-	sm.multiplayer_peer = peer
-	get_tree().set_multiplayer(sm)
+var peer: WebSocketMultiplayerPeer = WebSocketMultiplayerPeer.new()
 
-	# Signal abfangen, sobald Verbindung steht
-	sm.connected_to_server.connect(_on_connected_to_server)
+# Server ist im High-Level Multiplayer normalerweise peer_id = 1
+const SERVER_ID: int = 1
 
-func _on_send_pressed() -> void:
-	if messageinput.text.strip_edges() == "":
-		return
-	rpc("msg_rpc", username, messageinput.text)
-	messageinput.text = ""
+# =========================
+# Client-side cached state (vom Server)
+# =========================
+var username: String = ""
+var players: Array = []                 # peer ids
+var used_words: Array = []              # words (Array vom Server)
+var current_player_id: int = 0
+var game_started: bool = false
 
-func _on_connected_to_server():
-	print("Client verbunden zum Server!")
-	joined()  # Jetzt darfst du RPCs senden
 
-@rpc("any_peer", "call_local")
-func msg_rpc(username, data):
-	messagebox.text += str(username, ": ", data, "\n")
-	messagebox.scroll_vertical = INF
-
-func joined():
-	var my_id = multiplayer.get_unique_id()
-	if multiplayer.is_server():
-		# Direkt auf Server ausführen
-		add_player_rpc(my_id)
-	else:
-		# Client sagt dem Server: "Ich bin da!"
-		rpc_id(1, "add_player_rpc", my_id)
-	connect_node.hide() 
-	game_node.show() 
-	username = nameinput.text
-	
+# =========================
+# Lifecycle
+# =========================
 func _ready() -> void:
-	add_child(http)
-	http.connect("request_completed", Callable(self, "_on_request_completed"))
+	# initial UI state
+	game_node.hide()
+	connect_node.show()
 
+	# UI wiring
 	check_button.pressed.connect(_on_check_button_pressed)
 	word_input.text_submitted.connect(_on_word_submitted)
+	ready_button.pressed.connect(_on_ready_pressed)
 
-	result_label.text = "Wörter werden geladen..."
+	# Chat send (falls du einen Send-Button hast, callt der diese Methode)
+	# -> _on_send_pressed() per Button verbinden im Editor oder hier connecten, wenn du einen Button hast.
 
-	http.request("https://raw.githubusercontent.com/Flavio11-12/SchellenParty/main/wortliste.txt")
+	_set_connected_ui(false)
 
-func _on_request_completed(result, response_code, headers, body) -> void:
-	if response_code == 200:
-		var text: String = body.get_string_from_utf8()
-		valid_words.clear()
-		used_words.clear()
-
-		for line in text.split("\n", false):
-			var word := line.strip_edges()
-			if word != "":
-				valid_words.append(word.to_lower())
-
-		result_label.text = "Wörter geladen! Gib ein Wort ein."
-		check_button.disabled = false
-		print("Wörter geladen: ", valid_words.size())
-	else:
-		result_label.text = "Fehler beim Laden der Wortliste."
-		print("Fehler beim Laden der Datei: ", response_code)
-
-func _on_check_button_pressed() -> void:
-	_check_word()
-
-func _on_word_submitted(new_text: String) -> void:
-	_check_word()
+	ready_label.text = "Noch nicht verbunden."
+	result_label.text = "Verbinde dich mit dem Server."
 
 
-func _check_word() -> void:
-	if valid_words.size() == 0:
-		result_label.text = "Die Wortliste wird noch geladen..."
+# =========================
+# Connect Button
+# =========================
+func _on_client_pressed() -> void:
+	# Falls schon verbunden/versucht wird, neu initialisieren:
+	peer = WebSocketMultiplayerPeer.new()
+
+	var url: String = "ws://%s:%d" % [IP_ADDRESS, PORT]
+	var err: int = peer.create_client(url)
+	if err != OK:
+		push_error("WebSocket connect error: %s" % str(err))
+		ready_label.text = "Verbindung fehlgeschlagen (create_client)."
 		return
 
-	var word := word_input.text.strip_edges().to_lower()
+	var sm: SceneMultiplayer = SceneMultiplayer.new()
+	sm.multiplayer_peer = peer
+	get_tree().set_multiplayer(sm)
 
-	if word == "":
-		result_label.text = "Bitte ein Wort eingeben."
-		return
+	# Signale (ohne Lambdas)
+	multiplayer.connected_to_server.connect(_on_connected_to_server)
+	multiplayer.connection_failed.connect(_on_connection_failed)
+	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
-	if word in used_words:
-		result_label.text = "⚠️ \"" + word + "\" wurde bereits eingegeben."
-		return
-
-	if word in valid_words:
-		result_label.text = "✅ \"" + word + "\" ist gültig."
-		used_words.append(word)
-		server_broadcast.rpc(word)
-		print("Vor index +: " + str(current_turn_index))
-		print("Nach index +: " + str(current_turn_index))
-		print("Players:", players)
-		end_turn()
-	else:
-		result_label.text = "❌ \"" + word + "\" ist nicht in der Liste."
+	ready_label.text = "Verbinde… " + url
+	result_label.text = "Verbinde…"
+	print("[Client] Connecting to:", url)
 
 
-@rpc("any_peer", "call_remote")  # jeder Peer empfängt es
-func server_broadcast(word: String) -> void:
-	if word in used_words:
-		return  # doppelt vermeiden
-	used_words.append(word)
-	result_label.text = "Wort hinzugefügt: " + word
+# =========================
+# Multiplayer Callbacks
+# =========================
+func _on_connected_to_server() -> void:
+	print("[Client] ✅ connected_to_server. My ID:", multiplayer.get_unique_id())
 
-func start_turn():
-	current_player_id = players[current_turn_index]
-	rpc("sync_turn", current_player_id)
+	# UI umschalten
+	connect_node.hide()
+	game_node.show()
 
-func end_turn():
-	if !multiplayer.is_server():
-		return  # Clients warten
+	_set_connected_ui(true)
 
-	if players.size() == 0:
-		print("Keine Spieler, Turn kann nicht weitergegeben werden")
-		return
+	# Username ermitteln + registrieren
+	username = nameinput.text.strip_edges()
+	if username == "":
+		username = "Player"
 
-	current_turn_index = (current_turn_index + 1) % players.size()
-	current_player_id = players[current_turn_index]
-	print("End_turn: current_turn_index =", current_turn_index)
-	print("Next player ID =", current_player_id)
+	# Registrierung beim ServerMain
+	rpc_id(SERVER_ID, "register_player_rpc", username)
 
-	# an alle Peers synchronisieren
-	rpc("sync_turn", current_player_id)
+	ready_label.text = "Verbunden als %s. Warte auf Start…" % username
+	result_label.text = "Gib ein Wort ein (wenn du am Zug bist)."
 
 
-@rpc("any_peer", "call_local")
-func sync_turn(active_player_id: int):
-	current_player_id = active_player_id
-	if multiplayer.get_unique_id() == current_player_id:
-		word_input.editable = true
+func _on_connection_failed() -> void:
+	print("[Client] ❌ connection_failed")
+	ready_label.text = "Verbindung fehlgeschlagen."
+	result_label.text = "Server nicht erreichbar?"
+	_set_connected_ui(false)
+
+	connect_node.show()
+	game_node.hide()
+
+
+func _on_server_disconnected() -> void:
+	print("[Client] ⚠️ server_disconnected")
+	ready_label.text = "Server getrennt."
+	result_label.text = "Verbindung verloren."
+	_set_connected_ui(false)
+
+	connect_node.show()
+	game_node.hide()
+
+
+# =========================
+# UI Helpers
+# =========================
+func _set_connected_ui(is_connected: bool) -> void:
+	# Chat
+	messageinput.editable = is_connected
+
+	# Wort UI (Turn-basiert gesteuert)
+	word_input.editable = false
+	check_button.disabled = not is_connected
+
+	# Chatbox nur Anzeige
+	messagebox.editable = false
+
+
+
+func _set_my_turn(is_my_turn: bool) -> void:
+	word_input.editable = is_my_turn
+	check_button.disabled = not is_my_turn
+	if is_my_turn:
 		ready_label.text = "Du bist am Zug!"
 	else:
-		word_input.editable = false
 		ready_label.text = "Warte auf Spieler " + str(current_player_id)
 
 
-func _on_button_pressed() -> void:
-	start_turn()
-	ready_button.hide()
-	rpc("hide_ready_button_rpc")
+# =========================
+# Chat
+# =========================
+func _on_send_pressed() -> void:
+	var msg: String = messageinput.text.strip_edges()
+	if msg == "":
+		return
 
-@rpc("any_peer", "call_local")
-func hide_ready_button_rpc():
+	rpc_id(SERVER_ID, "send_chat_rpc", msg)
+	messageinput.text = ""
+
+
+# =========================
+# Game Start (Ready button)
+# =========================
+func _on_ready_pressed() -> void:
+	# Start-Request an Server (du kannst serverseitig einschränken, wer starten darf)
+	rpc_id(SERVER_ID, "start_game_rpc")
 	ready_button.hide()
 
-@rpc("any_peer", "call_local")
-func add_player_rpc(peer_id):
-	if peer_id not in players:
-		players.append(peer_id)
-		print("Players:", players)
+
+# =========================
+# Word submit
+# =========================
+func _on_check_button_pressed() -> void:
+	_submit_word()
+
+func _on_word_submitted(_new_text: String) -> void:
+	_submit_word()
+
+func _submit_word() -> void:
+	if not multiplayer.has_multiplayer_peer():
+		result_label.text = "Nicht verbunden."
+		return
+
+	var w: String = word_input.text.strip_edges()
+	if w == "":
+		result_label.text = "Bitte ein Wort eingeben."
+		return
+
+	# Client-side guard (Server prüft sowieso nochmal)
+	if multiplayer.get_unique_id() != current_player_id:
+		result_label.text = "Nicht dein Zug."
+		return
+
+	rpc_id(SERVER_ID, "submit_word_rpc", w)
+	word_input.clear()
+
+
+# ============================================================
+# RPCs: Server -> Client (müssen exakt so heißen wie in ServerMain)
+# ============================================================
+
+@rpc("authority", "call_remote")
+func state_sync_rpc(state: Dictionary) -> void:
+	players = state.get("players", [])
+	var names_map: Dictionary = state.get("names", {})
+	used_words = state.get("used_words", [])
+	current_player_id = int(state.get("current_player_id", 0))
+	game_started = bool(state.get("game_started", false))
+
+	# Playerliste UI
+	playerlist.text = ""
+	for pid in players:
+		var n = names_map.get(pid, "Player %d" % pid)
+		playerlist.text += "%s (%s)\n" % [str(n), str(pid)]
+
+	# Turn UI (falls schon gestartet)
+	if game_started and current_player_id != 0:
+		_set_my_turn(multiplayer.get_unique_id() == current_player_id)
+	else:
+		word_input.editable = false
+		check_button.disabled = true
+		ready_label.text = "Warte auf Start…"
+
+
+@rpc("authority", "call_remote")
+func sync_turn_rpc(active_player_id: int) -> void:
+	current_player_id = active_player_id
+	_set_my_turn(multiplayer.get_unique_id() == current_player_id)
+
+
+@rpc("authority", "call_remote")
+func word_accepted_rpc(word: String, by_peer_id: int, by_name: String) -> void:
+	if word not in used_words:
+		used_words.append(word)
+
+	result_label.text = "✅ %s: %s" % [by_name, word]
+
+
+@rpc("authority", "call_remote")
+func word_result_rpc(ok: bool, word: String, reason: String) -> void:
+	if ok:
+		result_label.text = "✅ \"%s\" akzeptiert." % word
+	else:
+		result_label.text = "❌ \"%s\": %s" % [word, reason]
+
+
+@rpc("authority", "call_remote")
+func chat_broadcast_rpc(sender_name: String, message: String) -> void:
+	messagebox.text += "%s: %s\n" % [sender_name, message]
+	messagebox.scroll_vertical = INF
