@@ -7,7 +7,8 @@ extends Node
 @onready var game_node: Control = $"Game"
 
 @onready var playerlist: Label = $"Game/PlayerList"
-@onready var nameinput: LineEdit = $"Connect/VBoxContainer/NameEdit"
+@onready var ipinput: LineEdit = $"Connect/VBoxContainer/NameEdit"
+@onready var nameinput: LineEdit = $"Connect/VBoxContainer/NamenEingabe"
 
 @onready var messagebox: TextEdit = $"Game/VBoxContainer/Messages"
 @onready var messageinput: LineEdit = $"Game/VBoxContainer/HBoxContainer/Message"
@@ -104,7 +105,7 @@ func _on_connected_to_server() -> void:
 	_set_connected_ui(true)
 
 	# Username ermitteln + registrieren
-	username = nameinput.text.strip_edges()
+	username = ipinput.text.strip_edges()
 	if username == "":
 		username = "Player"
 
@@ -262,3 +263,20 @@ func word_result_rpc(ok: bool, word: String, reason: String) -> void:
 func chat_broadcast_rpc(sender_name: String, message: String) -> void:
 	messagebox.text += "%s: %s\n" % [sender_name, message]
 	messagebox.scroll_vertical = INF
+
+@rpc("any_peer")
+func send_chat_rpc(message: String) -> void:
+	pass
+
+@rpc("any_peer")
+func register_player_rpc(username: String) -> void:
+	pass
+
+# Client -> Server RPC Stubs
+@rpc("any_peer")
+func start_game_rpc() -> void:
+	pass
+
+@rpc("any_peer")
+func submit_word_rpc(word: String) -> void:
+	pass

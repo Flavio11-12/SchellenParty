@@ -22,6 +22,7 @@ var sm: SceneMultiplayer
 
 
 func _ready() -> void:
+	print("Server root node name:", name)
 	print("[Server] Booting…")
 	_load_wordlist()
 	_start_server()
@@ -291,3 +292,5 @@ func word_result_rpc(ok: bool, word: String, reason: String) -> void:
 func chat_broadcast_rpc(username: String, message: String) -> void:
 	# Implement on client
 	pass
+
+#Test
