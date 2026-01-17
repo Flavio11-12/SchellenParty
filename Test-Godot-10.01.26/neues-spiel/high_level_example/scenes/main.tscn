@@ -39,10 +39,21 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -21.0
+offset_left = -25.0
 offset_top = 27.0
-offset_right = 19.0
+offset_right = 15.0
 offset_bottom = 50.0
+grow_horizontal = 2
+
+[node name="SilbenLabel" type="Label" parent="Game"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -95.0
+offset_top = 228.0
+offset_right = 68.0
+offset_bottom = 251.0
 grow_horizontal = 2
 
 [node name="Resultlabel" type="Label" parent="Game"]
@@ -50,9 +61,9 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -85.0
+offset_left = -95.0
 offset_top = 201.0
-offset_right = 78.0
+offset_right = 68.0
 offset_bottom = 224.0
 grow_horizontal = 2
 
@@ -72,9 +83,10 @@ texture = ExtResource("4_y3o8n")
 expand_mode = 1
 
 [node name="PunkteL" type="Label" parent="Game"]
-offset_left = 510.0
+layout_mode = 0
+offset_left = 515.0
 offset_top = 466.0
-offset_right = 617.0
+offset_right = 622.0
 offset_bottom = 504.0
 
 [node name="PlayerList" type="Label" parent="Game"]
@@ -133,6 +145,9 @@ offset_right = 136.5
 offset_bottom = 25.75
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="NamenEingabe" type="LineEdit" parent="Connect/VBoxContainer"]
+layout_mode = 2
 
 [node name="NameEdit" type="LineEdit" parent="Connect/VBoxContainer"]
 layout_mode = 2

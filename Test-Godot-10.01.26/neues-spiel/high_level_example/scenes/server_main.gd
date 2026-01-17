@@ -8,29 +8,33 @@ const WORDLIST_PATH: String = "res://high_level_example/scenes/wortliste.txt"
 # ========= Game State (authoritative) =========
 var valid_words: PackedStringArray = PackedStringArray()
 var used_words: Dictionary = {} # used_words[word] = true
-
 var players: Array[int] = []
 var names: Dictionary = {} # peer_id -> username
 var current_turn_index: int = 0
 var current_player_id: int = 0
 var game_started: bool = false
 var scores: Dictionary = {} # peer_id -> Punkte
+const WIN_SCORE: int = 15
+
+# Silben für die Runde
+var silben: Array[String] = ["ba", "be", "bi", "bo", "bu", "la", "le", "li", "lo", "lu"]
+var current_syllable: String = ""
 
 # ========= Networking =========
 var peer: WebSocketMultiplayerPeer
 var sm: SceneMultiplayer
 
 # ========= Turn Timer =========
-const TURN_TIME := 30.0
+const TURN_TIME: float = 15.0
 var turn_timer: Timer
 
 
 func _ready() -> void:
-	print("Server root node name:", name)
 	print("[Server] Booting…")
 	_load_wordlist()
 	_start_server()
 
+	# Timer initialisieren
 	turn_timer = Timer.new()
 	turn_timer.one_shot = true
 	turn_timer.wait_time = TURN_TIME
@@ -46,7 +50,6 @@ func _ready() -> void:
 
 func _start_server() -> void:
 	peer = WebSocketMultiplayerPeer.new()
-
 	var err: int = peer.create_server(PORT)
 	if err != OK:
 		push_error("[Server] Failed to start WebSocket server. Error=%s" % str(err))
@@ -113,13 +116,10 @@ func _on_peer_disconnected(id: int) -> void:
 # ---------------------------
 func _make_public_state() -> Dictionary:
 	var used_arr: Array[String] = []
-	used_arr.resize(used_words.size())
-	var i: int = 0
 	for k in used_words.keys():
-		used_arr[i] = str(k)
-		i += 1
+		used_arr.append(str(k))
 
-	var name_map: Dictionary = {}
+	var name_map: Dictionary[int, String] = {}
 	for pid: int in players:
 		name_map[pid] = names.get(pid, "Player %d" % pid)
 
@@ -130,7 +130,8 @@ func _make_public_state() -> Dictionary:
 		"game_started": game_started,
 		"used_words": used_arr,
 		"word_count": used_arr.size(),
-		"scores": scores.duplicate() # <-- NEU
+		"scores": scores.duplicate(),
+		"current_syllable": current_syllable
 	}
 
 
@@ -148,9 +149,9 @@ func register_player_rpc(username: String) -> void:
 	if clean_name == "":
 		clean_name = "Player %d" % sender
 
-	if players.has(sender) == false:
+	if not players.has(sender):
 		players.append(sender)
-		scores[sender] = 0 # <-- Punkte initialisieren
+		scores[sender] = 0
 
 	names[sender] = clean_name
 
@@ -182,13 +183,14 @@ func start_game_rpc() -> void:
 	if not multiplayer.is_server():
 		return
 
-	if players.size() < 1:
+	if players.is_empty():
 		return
 
 	game_started = true
 	current_player_id = players[0]
 	current_turn_index = 0
 	_start_turn()
+	_next_syllable()
 
 	print("[Server] Game started. First player:", current_player_id)
 	rpc("state_sync_rpc", _make_public_state())
@@ -228,19 +230,29 @@ func submit_word_rpc(word: String) -> void:
 		rpc_id(sender, "word_result_rpc", false, w, "Nicht in der Liste.")
 		return
 
+	# Silbe prüfen
+	if not w.contains(current_syllable):
+		rpc_id(sender, "word_result_rpc", false, w, "Wort enthält nicht die Silbe '%s'!" % current_syllable)
+		return
+
 	# akzeptiert
 	used_words[w] = true
 	turn_timer.stop()
+	scores[sender] = scores.get(sender, 0) + 1
 
-	# Punkte geben
-	scores[sender] += 1
+	# Sieg prüfen
+	if scores[sender] >= WIN_SCORE:
+		game_started = false
+		var winner_name: String = str(names.get(sender, "Player %d" % sender))
+		rpc("game_over_rpc", sender, winner_name, scores.duplicate())
+		return
 
 	var uname: String = str(names.get(sender, "Player %d" % sender))
 	rpc("word_accepted_rpc", w, sender, uname)
-
-	# State sync, damit alle Spieler Punktestand sehen
 	rpc("state_sync_rpc", _make_public_state())
 
+	# neue Silbe für nächsten Spieler
+	_next_syllable()
 	_advance_turn()
 
 
@@ -252,11 +264,9 @@ func _start_turn() -> void:
 		return
 
 	print("[Server] ▶ Turn für Spieler", current_player_id)
-
 	turn_timer.stop()
 	turn_timer.wait_time = TURN_TIME
 	turn_timer.start()
-
 	rpc("sync_turn_rpc", current_player_id)
 
 
@@ -272,32 +282,23 @@ func _advance_turn() -> void:
 	current_player_id = players[current_turn_index]
 	_start_turn()
 
-	print("[Server] Next turn:", current_player_id)
+
+func _next_syllable() -> void:
+	current_syllable = silben[randi() % silben.size()]
+	rpc("new_syllable_rpc", current_syllable)
+	print("[Server] Neue Silbe:", current_syllable)
 
 
 # ============================================================
 # RPCs the server sends to clients (clients implement diese)
 # ============================================================
-
-@rpc("authority", "call_remote")
-func state_sync_rpc(state: Dictionary) -> void:
-	pass
-
-@rpc("authority", "call_remote")
-func sync_turn_rpc(active_player_id: int) -> void:
-	pass
-
-@rpc("authority", "call_remote")
-func word_accepted_rpc(word: String, by_peer_id: int, by_name: String) -> void:
-	pass
-
-@rpc("authority", "call_remote")
-func word_result_rpc(ok: bool, word: String, reason: String) -> void:
-	pass
-
-@rpc("authority", "call_remote")
-func chat_broadcast_rpc(username: String, message: String) -> void:
-	pass
+@rpc("authority", "call_remote") func state_sync_rpc(state: Dictionary) -> void: pass
+@rpc("authority", "call_remote") func sync_turn_rpc(active_player_id: int) -> void: pass
+@rpc("authority", "call_remote") func word_accepted_rpc(word: String, by_peer_id: int, by_name: String) -> void: pass
+@rpc("authority", "call_remote") func word_result_rpc(ok: bool, word: String, reason: String) -> void: pass
+@rpc("authority", "call_remote") func chat_broadcast_rpc(username: String, message: String) -> void: pass
+@rpc("authority", "call_remote") func game_over_rpc(winner_id: int, winner_name: String, scores: Dictionary) -> void: pass
+@rpc("authority", "call_remote") func new_syllable_rpc(syllable: String) -> void: pass
 
 
 # ============================================================
@@ -308,6 +309,6 @@ func _on_turn_timeout() -> void:
 		return
 
 	print("[Server] 💥 Zeit abgelaufen für:", current_player_id)
-
-	rpc("word_result_rpc", false, "💥 Zeit abgelaufen!")
+	rpc("word_result_rpc", false, "", "💥 Zeit abgelaufen!")
+	_next_syllable()
 	_advance_turn()
