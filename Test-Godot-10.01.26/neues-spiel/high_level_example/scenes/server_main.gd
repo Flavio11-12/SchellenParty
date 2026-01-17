@@ -14,11 +14,15 @@ var names: Dictionary = {} # peer_id -> username
 var current_turn_index: int = 0
 var current_player_id: int = 0
 var game_started: bool = false
+var scores: Dictionary = {} # peer_id -> Punkte
 
 # ========= Networking =========
 var peer: WebSocketMultiplayerPeer
 var sm: SceneMultiplayer
 
+# ========= Turn Timer =========
+const TURN_TIME := 30.0
+var turn_timer: Timer
 
 
 func _ready() -> void:
@@ -26,6 +30,12 @@ func _ready() -> void:
 	print("[Server] Booting…")
 	_load_wordlist()
 	_start_server()
+
+	turn_timer = Timer.new()
+	turn_timer.one_shot = true
+	turn_timer.wait_time = TURN_TIME
+	turn_timer.timeout.connect(_on_turn_timeout)
+	add_child(turn_timer)
 
 	# Multiplayer signals (join/leave)
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -70,20 +80,18 @@ func _load_wordlist() -> void:
 # ---------------------------
 func _on_peer_connected(id: int) -> void:
 	print("[Server] Peer connected:", id)
-	# Spieler wird erst "richtig" aufgenommen, wenn er register_player_rpc aufruft.
 
 
 func _on_peer_disconnected(id: int) -> void:
 	print("[Server] Peer disconnected:", id)
 
-	# remove from lists
 	names.erase(id)
+	scores.erase(id)
 
 	var idx: int = players.find(id)
 	if idx != -1:
 		players.remove_at(idx)
 
-	# Turn korrigieren, falls nötig
 	if players.is_empty():
 		current_turn_index = 0
 		current_player_id = 0
@@ -91,14 +99,12 @@ func _on_peer_disconnected(id: int) -> void:
 		rpc("state_sync_rpc", _make_public_state())
 		return
 
-	# Wenn der aktuelle Spieler raus ist, turn weitergeben
 	if id == current_player_id:
 		if current_turn_index >= players.size():
 			current_turn_index = 0
 		current_player_id = players[current_turn_index]
 		rpc("sync_turn_rpc", current_player_id)
 
-	# Alle updaten
 	rpc("state_sync_rpc", _make_public_state())
 
 
@@ -106,16 +112,13 @@ func _on_peer_disconnected(id: int) -> void:
 # Public State helper
 # ---------------------------
 func _make_public_state() -> Dictionary:
-	# used_words als Array exportieren (Dictionary ist als Set intern)
 	var used_arr: Array[String] = []
 	used_arr.resize(used_words.size())
-
 	var i: int = 0
 	for k in used_words.keys():
 		used_arr[i] = str(k)
 		i += 1
 
-	# players + names
 	var name_map: Dictionary = {}
 	for pid: int in players:
 		name_map[pid] = names.get(pid, "Player %d" % pid)
@@ -126,7 +129,8 @@ func _make_public_state() -> Dictionary:
 		"current_player_id": current_player_id,
 		"game_started": game_started,
 		"used_words": used_arr,
-		"word_count": used_arr.size()
+		"word_count": used_arr.size(),
+		"scores": scores.duplicate() # <-- NEU
 	}
 
 
@@ -134,7 +138,6 @@ func _make_public_state() -> Dictionary:
 # RPC API (Clients call these; Server is authoritative)
 # ============================================================
 
-# Client calls this immediately after connected
 @rpc("any_peer")
 func register_player_rpc(username: String) -> void:
 	if not multiplayer.is_server():
@@ -147,19 +150,19 @@ func register_player_rpc(username: String) -> void:
 
 	if players.has(sender) == false:
 		players.append(sender)
+		scores[sender] = 0 # <-- Punkte initialisieren
+
 	names[sender] = clean_name
 
 	print("[Server] Registered:", sender, clean_name)
 	rpc("state_sync_rpc", _make_public_state())
 
-	# Wenn Spiel noch nicht gestartet, setze "current player" auf ersten Spieler
 	if not game_started and players.size() >= 1 and current_player_id == 0:
 		current_turn_index = 0
 		current_player_id = players[0]
-		rpc("sync_turn_rpc", current_player_id)
+		_start_turn()
 
 
-# Optional: simple chat relay (authoritative relay)
 @rpc("any_peer")
 func send_chat_rpc(message: String) -> void:
 	if not multiplayer.is_server():
@@ -174,7 +177,6 @@ func send_chat_rpc(message: String) -> void:
 	rpc("chat_broadcast_rpc", uname, msg)
 
 
-# Start game (host / any player) - you can restrict if you want
 @rpc("any_peer")
 func start_game_rpc() -> void:
 	if not multiplayer.is_server():
@@ -184,15 +186,15 @@ func start_game_rpc() -> void:
 		return
 
 	game_started = true
-	current_turn_index = 0
 	current_player_id = players[0]
+	current_turn_index = 0
+	_start_turn()
 
 	print("[Server] Game started. First player:", current_player_id)
 	rpc("state_sync_rpc", _make_public_state())
 	rpc("sync_turn_rpc", current_player_id)
 
 
-# Client submits a word; server validates
 @rpc("any_peer")
 func submit_word_rpc(word: String) -> void:
 	if not multiplayer.is_server():
@@ -222,28 +224,42 @@ func submit_word_rpc(word: String) -> void:
 		rpc_id(sender, "word_result_rpc", false, w, "Schon benutzt.")
 		return
 
-	# Validierung
 	if not valid_words.has(w):
 		rpc_id(sender, "word_result_rpc", false, w, "Nicht in der Liste.")
 		return
 
 	# akzeptiert
 	used_words[w] = true
+	turn_timer.stop()
 
-	# Informiere alle Clients, dass Wort akzeptiert wurde
+	# Punkte geben
+	scores[sender] += 1
+
 	var uname: String = str(names.get(sender, "Player %d" % sender))
 	rpc("word_accepted_rpc", w, sender, uname)
 
-	# Turn weitergeben
-	_advance_turn()
+	# State sync, damit alle Spieler Punktestand sehen
+	rpc("state_sync_rpc", _make_public_state())
 
-	# optional: state sync, falls du komplett deterministisch halten willst
-	# rpc("state_sync_rpc", _make_public_state())
+	_advance_turn()
 
 
 # ============================================================
 # Turn logic (server-only)
 # ============================================================
+func _start_turn() -> void:
+	if current_player_id == 0:
+		return
+
+	print("[Server] ▶ Turn für Spieler", current_player_id)
+
+	turn_timer.stop()
+	turn_timer.wait_time = TURN_TIME
+	turn_timer.start()
+
+	rpc("sync_turn_rpc", current_player_id)
+
+
 func _advance_turn() -> void:
 	if players.is_empty():
 		current_turn_index = 0
@@ -254,43 +270,44 @@ func _advance_turn() -> void:
 
 	current_turn_index = (current_turn_index + 1) % players.size()
 	current_player_id = players[current_turn_index]
+	_start_turn()
 
 	print("[Server] Next turn:", current_player_id)
-	rpc("sync_turn_rpc", current_player_id)
 
 
 # ============================================================
-# RPCs the server sends to clients (clients implement these)
-# (We still declare them here so you see the contract.)
+# RPCs the server sends to clients (clients implement diese)
 # ============================================================
 
 @rpc("authority", "call_remote")
 func state_sync_rpc(state: Dictionary) -> void:
-	# Implement on client
 	pass
-
 
 @rpc("authority", "call_remote")
 func sync_turn_rpc(active_player_id: int) -> void:
-	# Implement on client
 	pass
-
 
 @rpc("authority", "call_remote")
 func word_accepted_rpc(word: String, by_peer_id: int, by_name: String) -> void:
-	# Implement on client
 	pass
-
 
 @rpc("authority", "call_remote")
 func word_result_rpc(ok: bool, word: String, reason: String) -> void:
-	# Implement on client (rejections / feedback for sender)
 	pass
-
 
 @rpc("authority", "call_remote")
 func chat_broadcast_rpc(username: String, message: String) -> void:
-	# Implement on client
 	pass
 
-#Test
+
+# ============================================================
+# Timer Callback
+# ============================================================
+func _on_turn_timeout() -> void:
+	if not game_started:
+		return
+
+	print("[Server] 💥 Zeit abgelaufen für:", current_player_id)
+
+	rpc("word_result_rpc", false, "💥 Zeit abgelaufen!")
+	_advance_turn()
