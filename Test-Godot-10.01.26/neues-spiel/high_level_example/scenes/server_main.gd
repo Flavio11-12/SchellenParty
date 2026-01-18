@@ -17,7 +17,16 @@ var scores: Dictionary = {} # peer_id -> Punkte
 const WIN_SCORE: int = 15
 
 # Silben für die Runde
-var silben: Array[String] = ["ba", "be", "bi", "bo", "bu", "la", "le", "li", "lo", "lu"]
+var silben: Array[String] = [
+	"ab", "an", "ar", "be", "bi", "da", "di", "do",
+	"el", "en", "er", "ge", "ha", "he", "hi", "ho",
+	"im", "in", "ka", "ko", "la", "le", "li", "lo",
+	"ma", "me", "mi", "mo", "na", "ne", "ni", "no",
+	"ob", "or", "pa", "pe", "pi", "po", "ra", "re",
+	"ri", "ro", "sa", "se", "si", "so", "ta", "te",
+	"ti", "to", "ul", "un", "ur", "va", "ve", "vi",
+	"vo", "wa", "we", "wi", "wo", "za", "ze", "zi"
+]
 var current_syllable: String = ""
 
 # ========= Networking =========
